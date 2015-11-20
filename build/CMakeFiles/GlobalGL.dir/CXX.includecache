@@ -63,6 +63,10 @@ unistd.h
 -
 math.h
 -
+type_traits
+-
+algorithm
+-
 include/Polynomial.hpp
 /home/vali/Desktop/Semester V/Graphics & Visualization/Homework_8/include/Polynomial.hpp
 include/lodepng.h

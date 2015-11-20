@@ -12,6 +12,8 @@
 #include <limits.h>
 #include <unistd.h>
 #include <math.h>
+#include <type_traits>
+#include <algorithm>
 #include "include/Polynomial.hpp"
 #include "include/lodepng.h"
 #include "include/plyloader.h"
@@ -29,11 +31,11 @@ typedef std::array<float, 4> fColorRGBA;
 typedef std::vector<std::vector<uColorRGBA> > ImageContainer;
 
 struct Point3D {
-	double x;
-	double y;
-	double z;
+	float x;
+	float y;
+	float z;
 	unsigned long index;
-	std::array<double, 3> n;
+	std::array<float, 3> n;
 	Point3D()
 	{
 		n[0] = n[1] = n[2] = 0.0;
@@ -41,16 +43,16 @@ struct Point3D {
 };
 
 struct Vec3D {
-	double x;
-	double y;
-	double z;
+	float x;
+	float y;
+	float z;
 };
 
 struct Triangle {
 	Point3D p;
 	Point3D q;
 	Point3D r;
-	std::array<double, 3> face_n;
+	std::array<float, 3> face_n;
 	Triangle()
 	{
 		face_n[0] = face_n[1] = face_n[2] = 0.0;
@@ -103,6 +105,8 @@ float perspective_far = 1000.0;
 
 /* background color */
 fColorRGBA background = {0.0f, 0.15f, 0.5f, 1.0f};
+
+std::vector<Vec3D> lightsPos;
 
 /* blinn-phong parameters */
 float light_x = 0;
@@ -226,6 +230,80 @@ float getTofIntersection(const float& x_pos,const float& y_pos,
 	return -(p0n + d) / vn; 
 }
 
+void getBarycentricCoords(float &a, float &b, float &c, const Triangle& tr,
+	const float& i_x, const float& i_y, const float& i_z)
+{
+	cv::Mat m(3, 3, CV_32F, 0);
+	m.at<float>(0,0) = tr.p.x;
+	m.at<float>(1,0) = tr.p.y;
+	m.at<float>(2,0) = tr.p.z;
+	m.at<float>(0,1) = tr.q.x;
+	m.at<float>(1,1) = tr.q.y;
+	m.at<float>(2,1) = tr.q.z;
+	m.at<float>(0,2) = tr.r.x;
+	m.at<float>(1,2) = tr.r.y;
+	m.at<float>(2,2) = tr.r.z;
+	cv::Mat B(3, 1, CV_32F, 0);
+	B.at<float>(0,0) = i_x;
+	B.at<float>(1,0) = i_y;
+	B.at<float>(2,0) = i_z;
+	cv::Mat res(3, 1, CV_32F);
+	res = m.inv(cv::DECOMP_SVD) * B;
+	if(res.rows != 3 && res.cols != 1)
+	{
+		std::cerr << "Dimensions of result barycentric matrix are wrong!\n";
+		exit(1);
+	}
+	float eps = std::numeric_limits<float>::epsilon();
+	float sum = res.at<float>(0,0) + res.at<float>(1,0) + res.at<float>(2,0);
+	if(!(sum > (1 - eps) && sum < (1 + eps)))
+	{
+		std::cerr << "Barycentric coordinates do not sum up to 1!\n";
+		exit(1);
+	}
+	a = res.at<float>(0,0);
+	b = res.at<float>(1,0);
+	c = res.at<float>(2,0);
+}
+
+std::vector<std::pair<Vec3D, Vec3D> > getLightVecs(const unsigned int& nearest_obj, 
+	const std::vector<DataObject>& d_objects, const float& i_x, const float& i_y, 
+	const float& i_z)
+{
+	std::vector<std::pair<Vec3D, Vec3D> > lightUnitVecs;
+	for(unsigned int i = 0; i < lightsPos.size(); i++)
+	{
+		float l_x = lightsPos[i].x - i_x;
+		float l_y = lightsPos[i].y - i_y;
+		float l_z = lightsPos[i].z - i_z;
+		float l_length = sqrt(l_x * l_x + l_y * l_y + l_z * l_z);
+		l_x = l_x / l_length;
+		l_y = l_y / l_length;
+		l_z = l_z / l_length;
+		bool check = false;
+		for(unsigned int j = 0; j < d_objects.size(); j++)
+		{
+			if(j != nearest_obj)
+			{
+				for(unsigned int k = 0; k < d_objects[j].obj.size(); k++)
+				{
+					Triangle tri = d_objects[i].obj[j];
+					bool check = checkIntersection(i_x, i_y, i_z, l_x, l_y, l_z, tri);
+					if(check) break;
+				}
+			}
+			if(check) break;
+		}
+		if(check == false)
+		{
+			Vec3D v; 
+			v.x = l_x; v.y = l_y; v.z = l_z;
+			lightUnitVecs.push_back(std::make_pair(lightsPos[i], v));
+		}
+	}
+	return lightUnitVecs;
+}
+
 fColorRGBA computeRayTrace(float x_pos, float y_pos, float z_pos,
 	float s_x, float s_y, float s_z, unsigned int depth)
 {
@@ -267,9 +345,16 @@ fColorRGBA computeRayTrace(float x_pos, float y_pos, float z_pos,
 	if(first_t) return background;
 	else 
 	{
+		std::cout << "do you get here?\n";
 		float i_x = x_pos + min_t * s_x;
 		float i_y = y_pos + min_t * s_y;
 		float i_z = z_pos + min_t * s_z;
+		float alpha1, alpha2, alpha3;
+		getBarycentricCoords(alpha1, alpha2, alpha3, nearest_tri, i_x, i_y, i_z);
+		/* store light vectors */
+		std::vector<std::pair<Vec3D, Vec3D> > lightUnitVecs = 
+		getLightVecs(nearest_obj, d_objects, i_x, i_y, i_z);
+
 
 		return col;
 	}
@@ -801,6 +886,9 @@ int main(int argc, char** argv)
 	std::cout << "Total no of triangles: " << 
 	bunny1.obj.size() + bunny2.obj.size() + buddha1.obj.size() << "\n\n";
 
+	// potentially add more lights
+	Vec3D l; l.x = light_x; l.y = light_y; l.z = light_z;
+	lightsPos.push_back(l);
 
 	// initialize GLUT
 	glutInit(&argc,argv);
