@@ -1,0 +1,1 @@
+/home/vali/Desktop/Semester V/Graphics & Visualization/Homework_8/build/CMakeFiles/GlobalGL.dir

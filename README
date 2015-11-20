@@ -1,0 +1,5 @@
+Running steps:
+1. cd to build directory
+2. run $ cmake ..
+3. run $ make
+4. run executable $ ./GlobalGL
